@@ -858,6 +858,23 @@ def markdown_to_pdf_bytes(md: str) -> bytes:
     from reportlab.lib.units import cm
     from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
+    # --- RIGOROUS UNICODE SANITIZATION ---
+    if md:
+        md = (
+            md.replace("\u00a0", " ")      # Non-breaking space
+              .replace("\u202f", " ")      # Narrow no-break space
+              .replace("\u2002", " ")      # En space
+              .replace("\u2003", " ")      # Em space
+              .replace("\u2011", "-")      # Non-breaking hyphen
+              .replace("\u2013", "-")      # En dash
+              .replace("\u2014", "-")      # Em dash
+              .replace("\u201c", '"')      # Left smart double quote
+              .replace("\u201d", '"')      # Right smart double quote
+              .replace("\u2018", "'")      # Left smart single quote
+              .replace("\u2019", "'")      # Right smart single quote
+        )
+    # ------------------------------------
+
     buf = io.BytesIO()
     pdf = SimpleDocTemplate(
         buf, pagesize=A4,
