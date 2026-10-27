@@ -842,6 +842,15 @@ def markdown_to_docx_bytes(md: str) -> bytes:
     doc.save(buf)
     return buf.getvalue()
 
+#New
+def clean_pdf_text(text: str) -> str:
+    if not text:
+        return ""
+    # Replace non-breaking spaces, en-dashes, and special dash characters with standard characters
+    text = text.replace("\u2011", "-").replace("\u2013", "-").replace("\u2014", "-")
+    text = text.replace("\u00a0", " ")
+    return text
+#End New
 
 def markdown_to_pdf_bytes(md: str) -> bytes:
     from reportlab.lib.pagesizes import A4
