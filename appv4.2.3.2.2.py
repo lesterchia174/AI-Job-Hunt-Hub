@@ -1233,6 +1233,7 @@ def view_new_application():
         role = c2.text_input("Role Title *", value=st.session_state["app_role"])
         job_url = st.text_input("Job URL (optional)", value=st.session_state["app_url"])
         job_description = st.text_area("Job Description", value=st.session_state["app_desc"], height=180)
+
         resume_file = st.file_uploader("Upload Resume (PDF)", type=["pdf"])
 
         st.markdown("**Human-in-the-loop generation**")
