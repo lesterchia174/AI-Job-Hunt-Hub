@@ -307,7 +307,6 @@ def db_session():
 # ---------------------------------------------------------------------------
 # 3. AI & SCRAPING LAYER
 # ---------------------------------------------------------------------------
-
 @st.cache_resource(show_spinner="Loading embedding model (first run only)...")
 def load_embedding_model():
     try:
@@ -320,47 +319,85 @@ def load_embedding_model():
 
 def fetch_job_details_from_url(url: str) -> dict:
     """
-    Scrapes a job URL to extract company name, job title, and job description.
-    Returns a dict with: company, role, job_description, job_url.
+    End-to-end robust job fetcher: Uses Jina Reader API to bypass JS/anti-bot walls
+    on MyCareersFuture, LinkedIn, and JobStreet, then uses structured system/user prompts 
+    with regex cleaning to extract the 4 mandatory fields.
     """
     result = {"company": "", "role": "", "job_description": "", "job_url": url}
     if not url or not url.startswith("http"):
         return result
 
+    markdown_content = ""
     try:
+        # Step 1: Use Jina Reader API to render JS and bypass anti-bot blocks
+        jina_url = f"[https://r.jina.ai/](https://r.jina.ai/){url}"
         headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            )
+            "Accept": "application/json",
+            "X-With-Generated-Alt": "true"
         }
-        response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code != 200:
-            return result
-
-        soup = BeautifulSoup(response.text, "html.parser")
-
-        og_title = soup.find("meta", property="og:title")
-        if og_title and og_title.get("content"):
-            result["role"] = og_title["content"].strip()
-
-        og_site = soup.find("meta", property="og:site_name")
-        if og_site and og_site.get("content"):
-            result["company"] = og_site["content"].strip()
-
-        if not result["role"] and soup.title and soup.title.string:
-            result["role"] = soup.title.string.strip()
-
-        for script in soup(["script", "style", "nav", "footer", "header", "noscript", "svg"]):
-            script.extract()
-
-        text = soup.get_text(separator="\n", strip=True)
-        lines = [line.strip() for line in text.splitlines() if line.strip()]
-        result["job_description"] = "\n".join(lines[:150])
+        response = requests.get(jina_url, headers=headers, timeout=15)
+        
+        if response.status_code == 200:
+            markdown_content = response.text
+        else:
+            # Fallback to direct requests if Jina rate-limits
+            fallback_resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}, timeout=10)
+            if fallback_resp.status_code == 200:
+                soup = BeautifulSoup(fallback_resp.text, "html.parser")
+                for s in soup(["script", "style", "nav", "footer", "header", "noscript", "svg"]):
+                    s.extract()
+                markdown_content = soup.get_text(separator="\n", strip=True)
 
     except Exception as e:
-        print(f"Error fetching URL: {e}")
+        print(f"Error fetching URL content: {e}")
+        return result
+
+    if not markdown_content or len(markdown_content.strip()) < 50:
+        return result
+
+    # Step 2: Structured LLM/SLM Extraction using robust prompting & regex cleaning
+    system_prompt = (
+        "You are a precise data extraction micro-service. "
+        "Your task is to extract exactly 4 fields from the provided job posting text: "
+        "'company', 'role', 'job_url', and 'job_description'. "
+        "Output ONLY valid raw JSON. Do not include markdown code blocks, backticks, or conversational text."
+    )
+    
+    user_prompt = f"""Job URL: {url}
+
+Job Posting Content:
+{markdown_content[:10000]}
+
+Extract into this exact JSON structure:
+{{
+  "company": "",
+  "role": "",
+  "job_url": "{url}",
+  "job_description": ""
+}}
+"""
+
+    try:
+        extraction_prompt_combined = f"{system_prompt}\n\n{user_prompt}"
+        ai_response = call_llm(extraction_prompt_combined, operation="robust_url_extraction")
+        
+        # Robust Regex cleaning to strip markdown wrappers or text padding
+        cleaned = re.sub(r"^```(?:json)?\s*", "", ai_response.strip())
+        cleaned = re.sub(r"\s*```$", "", cleaned).strip()
+
+        parsed = json.loads(cleaned)
+
+        result["company"] = parsed.get("company", "").strip()
+        result["role"] = parsed.get("role", "").strip()
+        result["job_url"] = parsed.get("job_url", "").strip() or url
+        result["job_description"] = parsed.get("job_description", "").strip()
+
+    except Exception as llm_err:
+        print(f"LLM structured extraction failed: {llm_err}")
+        # Safe fallback if JSON parsing or LLM fails
+        lines = [line.strip() for line in markdown_content.splitlines() if line.strip()]
+        result["role"] = lines[0][:100] if lines else ""
+        result["job_description"] = markdown_content[:2000]
 
     return result
 
