@@ -307,6 +307,7 @@ def db_session():
 # ---------------------------------------------------------------------------
 # 3. AI & SCRAPING LAYER
 # ---------------------------------------------------------------------------
+
 @st.cache_resource(show_spinner="Loading embedding model (first run only)...")
 def load_embedding_model():
     try:
@@ -1190,182 +1191,370 @@ def view_tracker(search: str):
 
 
 def view_new_application():
+
     st.title("➕ New Application")
+
     st.caption(
+
         "Paste the job description and upload your resume, or paste a job link "
+
         "below to pull details automatically."
+
     )
 
+
+
     for key in ["app_company", "app_role", "app_url", "app_desc"]:
+
         if key not in st.session_state:
+
             st.session_state[key] = ""
 
+
+
     with st.container(border=True):
+
         st.markdown("**🔗 Quick Import from Job Link**")
+
         col_url, col_btn = st.columns([4, 1])
+
         with col_url:
+
             quick_url = st.text_input(
+
                 "Job Link",
+
                 placeholder="https://...",
+
                 label_visibility="collapsed",
+
                 key="quick_url_input"
+
             )
+
         with col_btn:
+
             if st.button("Fetch Details", use_container_width=True):
+
                 if quick_url:
+
                     with st.spinner("Pulling job information..."):
+
                         scraped = fetch_job_details_from_url(quick_url)
+
                         st.session_state["app_company"] = scraped["company"]
+
                         st.session_state["app_role"] = scraped["role"]
+
                         st.session_state["app_url"] = scraped["job_url"]
+
                         st.session_state["app_desc"] = scraped["job_description"]
+
                     st.success("Details pulled! Review them in the form below.")
+
                     st.rerun()
+
                 else:
+
                     st.warning("Please paste a URL first.")
 
+
+
     _, _, model_label = get_active_model()
+
     st.info(f"Using model: **{model_label}**")
 
+
+
     with st.form("new_app_form", clear_on_submit=True):
+
         c1, c2 = st.columns(2)
+
         company = c1.text_input("Company Name *", value=st.session_state["app_company"])
+
         role = c2.text_input("Role Title *", value=st.session_state["app_role"])
+
         job_url = st.text_input("Job URL (optional)", value=st.session_state["app_url"])
+
         job_description = st.text_area("Job Description", value=st.session_state["app_desc"], height=180)
+
+
+
+        #After
+
+        
+
+
+
+
+
+        
+
+
 
         resume_file = st.file_uploader("Upload Resume (PDF)", type=["pdf"])
 
+
+
         st.markdown("**Human-in-the-loop generation**")
+
         generation_choice = st.radio(
+
             "Choose what AI should generate",
+
             [
+
                 "Resume only",
+
                 "Cover letter only",
+
                 "Resume and cover letter",
+
                 "None",
+
             ],
+
             index=2,
+
             horizontal=True,
+
         )
+
+
 
         submitted = st.form_submit_button("🔍 Analyze & Add", type="primary")
 
+
+
     if submitted:
+
         for key in ["app_company", "app_role", "app_url", "app_desc"]:
+
             st.session_state[key] = ""
 
+
+
         company, role = clean_text(company), clean_text(role)
+
         if not company or not role:
+
             st.error("Company and Role are required.")
+
             return
 
+
+
         resume_text = extract_pdf_text(resume_file) if resume_file else ""
+
         match_str = ""
 
+
+
         tailored = ""
+
         cover = ""
+
         resume_filename = ""
+
         cover_letter_filename = ""
+
         doc_number = 0
 
+
+
         if resume_text and job_description:
+
             with st.spinner("Scoring resume against job..."):
+
                 score = calculate_match_score(resume_text, job_description)
+
                 match_str = f"{score:.0%}"
+
                 st.metric("Profile Match Score", match_str)
 
+
+
             generate_resume = generation_choice in [
+
                 "Resume only",
+
                 "Resume and cover letter",
+
             ]
+
             generate_cover = generation_choice in [
+
                 "Cover letter only",
+
                 "Resume and cover letter",
+
             ]
+
+
 
             if generate_resume:
+
                 with st.spinner(f"Tailoring resume with {model_label}..."):
+
                     tailored = tailor_resume(resume_text, job_description)
 
+
+
             if generate_cover:
+
                 base_resume = tailored if tailored else resume_text
+
                 with st.spinner(f"Drafting cover letter with {model_label}..."):
+
                     cover = generate_cover_letter(
+
                         base_resume,
+
                         job_description,
+
                         company,
+
                         role,
+
                     )
+
+
 
             if tailored or cover:
+
                 doc_number = get_next_doc_number()
 
+
+
                 if tailored:
+
                     resume_filename = build_document_filename(
+
                         doc_number, role, company, "CV"
+
                     )
 
+
+
                 if cover:
+
                     cover_letter_filename = build_document_filename(
+
                         doc_number, role, company, "CL"
+
                     )
+
+
 
             st.success("Document generation complete.")
 
+
+
             if tailored:
+
                 with st.expander("📄 Tailored Resume (preview)", expanded=False):
+
                     st.text_area(
+
                         "Tailored Resume",
+
                         tailored,
+
                         height=280,
+
                         label_visibility="collapsed",
+
                         disabled=True,
+
                     )
+
+
 
             if cover:
+
                 with st.expander("✉️ Cover Letter (preview)", expanded=False):
+
                     st.text_area(
+
                         "Cover Letter",
+
                         cover,
+
                         height=280,
+
                         label_visibility="collapsed",
+
                         disabled=True,
+
                     )
 
+
+
             app_id = svc_create_application(
+
                 company=company,
+
                 role=role,
+
                 job_url=job_url,
+
                 job_description=job_description,
+
                 resume_text=tailored if tailored else resume_text,
+
                 cover_letter=cover,
+
                 match_score=match_str,
+
                 status="Applied",
+
                 doc_number=doc_number,
+
                 resume_filename=resume_filename,
+
                 cover_letter_filename=cover_letter_filename,
+
             )
+
             st.session_state["edit_app_id"] = app_id
+
             st.success(f"✅ Application #{app_id} saved to Tracker.")
+
             if tailored or cover:
+
                 st.info(
+
                     "Open **✏️ Edit & Export** in the sidebar to polish the "
+
                     "documents and download them as PDF or DOCX."
+
                 )
 
+
+
         else:
+
             app_id = svc_create_application(
+
                 company=company,
+
                 role=role,
+
                 job_url=job_url,
+
                 job_description=job_description,
+
                 status="Applied",
+
             )
+
             st.info(
+
                 f"Application #{app_id} saved without AI analysis. "
+
                 "Upload a PDF + paste a job description to enable AI features."
-            )
+
+            ) 
 
 
 # ---------------------------------------------------------------------------
