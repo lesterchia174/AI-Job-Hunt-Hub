@@ -815,20 +815,45 @@ MIME_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.docu
 def _unescape_md(text: str) -> str:
     return re.sub(r"\\([\\`*_{}\[\]()#+\-.!|>~])", r"\1", text)
 
-
 def _parse_markdown_blocks(md: str):
     blocks = []
     in_skills_or_competencies = False
+    lines = (md or "").replace("\r\n", "\n").split("\n")
     
-    for raw in (md or "").replace("\r\n", "\n").split("\n"):
+    i = 0
+    while i < len(lines):
+        raw = lines[i]
         line = re.sub(r"(<br\s*/?>|\\)\s*$", "", raw.rstrip()).rstrip()
+        
         if not line.strip():
             in_skills_or_competencies = False
             blocks.append(("blank", ""))
+            i += 1
             continue
             
+        # --- TABLE DETECTION ---
+        if line.startswith("|") and line.endswith("|"):
+            if i + 1 < len(lines):
+                next_line = lines[i+1].strip()
+                if re.match(r"^\|[\s\-:|]+\|$", next_line):
+                    # Table detected
+                    headers = [c.strip() for c in line.strip("|").split("|")]
+                    rows = []
+                    i += 2
+                    while i < len(lines):
+                        row_line = lines[i].strip()
+                        if not (row_line.startswith("|") and row_line.endswith("|")):
+                            break
+                        row_cells = [c.strip() for c in row_line.strip("|").split("|")]
+                        rows.append(row_cells)
+                        i += 1
+                    blocks.append(("table", {"headers": headers, "rows": rows}))
+                    continue
+        # -----------------------
+
         if re.match(r"^\s*([-*_])\1{2,}\s*$", line):
             blocks.append(("blank", ""))
+            i += 1
             continue
             
         m_head = re.match(r"^(#{1,3})\s+(.*)$", line)
@@ -839,22 +864,68 @@ def _parse_markdown_blocks(md: str):
             else:
                 in_skills_or_competencies = False
             blocks.append((f"h{len(m_head.group(1))}", _unescape_md(m_head.group(2).replace("**", "").strip())))
+            i += 1
             continue
         
         m_bullet = re.match(r"^\s*[-*•]\s+(.*)$", line)
         if m_bullet:
             blocks.append(("bullet", m_bullet.group(1).strip()))
+            i += 1
             continue
             
         if in_skills_or_competencies:
             is_job_header = bool(re.search(r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|\b20\d{2}\b)", line)) or line.endswith(", Singapore")
             if not is_job_header:
                 blocks.append(("bullet", line.strip()))
+                i += 1
                 continue
 
         blocks.append(("para", line.strip()))
+        i += 1
+        
     return blocks
 
+
+"""
+#def _parse_markdown_blocks(md: str):
+#    blocks = []
+#    in_skills_or_competencies = False
+    
+#    for raw in (md or "").replace("\r\n", "\n").split("\n"):
+#        line = re.sub(r"(<br\s*/?>|\\)\s*$", "", raw.rstrip()).rstrip()
+#        if not line.strip():
+#            in_skills_or_competencies = False
+#            blocks.append(("blank", ""))
+#            continue
+            
+#        if re.match(r"^\s*([-*_])\1{2,}\s*$", line):
+#            blocks.append(("blank", ""))
+#            continue
+            
+#        m_head = re.match(r"^(#{1,3})\s+(.*)$", line)
+#        if m_head:
+#            heading_text = m_head.group(2).replace("**", "").strip().upper()
+#            if "CORE COMPETENCIES" in heading_text or "TECHNICAL SKILLSETS" in heading_text or "EDUCATION" in heading_text:
+#                in_skills_or_competencies = True
+#            else:
+#                in_skills_or_competencies = False
+#            blocks.append((f"h{len(m_head.group(1))}", _unescape_md(m_head.group(2).replace("**", "").strip())))
+#            continue
+        
+#        m_bullet = re.match(r"^\s*[-*•]\s+(.*)$", line)
+#        if m_bullet:
+#            blocks.append(("bullet", m_bullet.group(1).strip()))
+#            continue
+            
+#        if in_skills_or_competencies:
+#            is_job_header = bool(re.search(r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|\b20\d{2}\b)", line)) or line.endswith(", Singapore")
+#            if not is_job_header:
+#                blocks.append(("bullet", line.strip()))
+#                continue
+
+#        blocks.append(("para", line.strip()))
+#    return blocks
+"""
 
 def _inline_tokens(text: str):
     for part in re.split(r"(\*\*.+?\*\*|\*[^*\s][^*]*?\*)", text):
@@ -867,7 +938,7 @@ def _inline_tokens(text: str):
         else:
             yield _unescape_md(part), False, False
 
-
+#NEW
 def markdown_to_docx_bytes(md: str) -> bytes:
     from docx import Document
     from docx.shared import Pt
@@ -877,9 +948,42 @@ def markdown_to_docx_bytes(md: str) -> bytes:
     normal.font.name = "Calibri"
     normal.font.size = Pt(11)
 
-    for kind, text in _parse_markdown_blocks(md):
+    for item in _parse_markdown_blocks(md):
+        kind = item[0]
         if kind == "blank":
             continue
+            
+        if kind == "table":
+            data = item[1]
+            headers = data["headers"]
+            rows = data["rows"]
+            
+            table = doc.add_table(rows=1, cols=len(headers))
+            table.style = 'Table Grid'
+            
+            hdr_cells = table.rows[0].cells
+            for j, header in enumerate(headers):
+                para = hdr_cells[j].paragraphs[0]
+                clean_header = re.sub(r"<br\s*/?>", " ", header)
+                for t, bold, italic in _inline_tokens(clean_header):
+                    run = para.add_run(t)
+                    run.bold = True
+                    run.italic = italic
+                    
+            for row_data in rows:
+                row_cells = table.add_row().cells
+                for j, cell_data in enumerate(row_data):
+                    if j >= len(headers):
+                        break
+                    para = row_cells[j].paragraphs[0]
+                    clean_cell = re.sub(r"<br\s*/?>", " ", cell_data)
+                    for t, bold, italic in _inline_tokens(clean_cell):
+                        run = para.add_run(t)
+                        run.bold = bold
+                        run.italic = italic
+            continue
+
+        text = item[1]
         if kind in ("h1", "h2", "h3"):
             doc.add_heading(text, level=int(kind[1]))
             continue
@@ -895,6 +999,37 @@ def markdown_to_docx_bytes(md: str) -> bytes:
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()
+#NEW
+
+
+#def markdown_to_docx_bytes(md: str) -> bytes:
+#    from docx import Document
+#    from docx.shared import Pt
+
+#    doc = Document()
+#    normal = doc.styles["Normal"]
+#    normal.font.name = "Calibri"
+#   normal.font.size = Pt(11)
+
+#    for kind, text in _parse_markdown_blocks(md):
+#        if kind == "blank":
+#            continue
+#        if kind in ("h1", "h2", "h3"):
+#            doc.add_heading(text, level=int(kind[1]))
+#            continue
+#        para = (
+#            doc.add_paragraph(style="List Bullet")
+#            if kind == "bullet" else doc.add_paragraph()
+#        )
+#        for t, bold, italic in _inline_tokens(text):
+#            run = para.add_run(t)
+#            run.bold = bold
+#            run.italic = italic
+
+#    buf = io.BytesIO()
+#    doc.save(buf)
+#    return buf.getvalue()
+
 
 #New
 def clean_pdf_text(text: str) -> str:
@@ -906,11 +1041,13 @@ def clean_pdf_text(text: str) -> str:
     return text
 #End New
 
+#NEW
 def markdown_to_pdf_bytes(md: str) -> bytes:
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import cm
-    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    from reportlab.lib import colors
 
     # --- RIGOROUS UNICODE SANITIZATION ---
     if md:
@@ -953,9 +1090,16 @@ def markdown_to_pdf_bytes(md: str) -> bytes:
         bulletIndent=6, 
         spaceAfter=3
     )
+    table_cell_style = ParagraphStyle(
+        "TableCell",
+        parent=body,
+        fontSize=9,
+        leading=12,
+    )
 
     def to_markup(text: str) -> str:
         cleaned_text = re.sub(r"^\s*[-*•]\s+", "", text)
+        cleaned_text = re.sub(r"<br\s*/?>", " ", cleaned_text)
         out = []
         for t, bold, italic in _inline_tokens(cleaned_text):
             s = xml_escape(t)
@@ -967,20 +1111,132 @@ def markdown_to_pdf_bytes(md: str) -> bytes:
         return "".join(out)
 
     story = []
-    for kind, text in _parse_markdown_blocks(md):
+    for item in _parse_markdown_blocks(md):
+        kind = item[0]
         if kind == "blank":
             story.append(Spacer(1, 6))
+        elif kind == "table":
+            data = item[1]
+            headers = data["headers"]
+            rows = data["rows"]
+            
+            table_data = []
+            header_row = [Paragraph(to_markup(h), table_cell_style) for h in headers]
+            table_data.append(header_row)
+            
+            for row in rows:
+                row_cells = []
+                for i in range(len(headers)):
+                    cell_text = row[i] if i < len(row) else ""
+                    row_cells.append(Paragraph(to_markup(cell_text), table_cell_style))
+                table_data.append(row_cells)
+                
+            avail_width = 17 * cm
+            col_width = avail_width / len(headers) if headers else avail_width
+            col_widths = [col_width] * len(headers)
+            
+            t = Table(table_data, colWidths=col_widths)
+            t.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
+                ('TEXTCOLOR', (0,0), (-1,0), colors.black),
+                ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+                ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                ('INNERGRID', (0,0), (-1,-1), 0.25, colors.black),
+                ('BOX', (0,0), (-1,-1), 0.25, colors.black),
+                ('TOPPADDING', (0,0), (-1,-1), 4),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+            ]))
+            story.append(t)
+            story.append(Spacer(1, 6))
         elif kind in heads:
-            story.append(Paragraph(xml_escape(text), heads[kind]))
+            story.append(Paragraph(xml_escape(item[1]), heads[kind]))
         elif kind == "bullet":
-            story.append(Paragraph(to_markup(text), bullet_style, bulletText="•"))
+            story.append(Paragraph(to_markup(item[1]), bullet_style, bulletText="•"))
         else:
-            story.append(Paragraph(to_markup(text), body))
+            story.append(Paragraph(to_markup(item[1]), body))
     if not story:
         story.append(Paragraph(" ", body))
 
     pdf.build(story)
     return buf.getvalue()
+
+#END NEW  
+
+#def markdown_to_pdf_bytes(md: str) -> bytes:
+#    from reportlab.lib.pagesizes import A4
+#    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+#    from reportlab.lib.units import cm
+#    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+
+    # --- RIGOROUS UNICODE SANITIZATION ---
+#    if md:
+#        md = (
+#            md.replace("\u00a0", " ")      # Non-breaking space
+#              .replace("\u202f", " ")      # Narrow no-break space
+#              .replace("\u2002", " ")      # En space
+#              .replace("\u2003", " ")      # Em space
+#              .replace("\u2011", "-")      # Non-breaking hyphen
+#              .replace("\u2013", "-")      # En dash
+#              .replace("\u2014", "-")      # Em dash
+#              .replace("\u201c", '"')      # Left smart double quote
+#              .replace("\u201d", '"')      # Right smart double quote
+#              .replace("\u2018", "'")      # Left smart single quote
+#              .replace("\u2019", "'")      # Right smart single quote
+#        )
+    # ------------------------------------
+
+#    buf = io.BytesIO()
+ #   pdf = SimpleDocTemplate(
+ #       buf, pagesize=A4,
+ #       leftMargin=2 * cm, rightMargin=2 * cm,
+ #       topMargin=2 * cm, bottomMargin=2 * cm,
+ #   )
+ #   base = getSampleStyleSheet()
+ #   body = ParagraphStyle("Body", parent=base["BodyText"],
+ #                        fontName="Helvetica", fontSize=10.5, leading=14)
+ #   heads = {
+ #       "h1": ParagraphStyle("H1", parent=body, fontName="Helvetica-Bold",
+ #                            fontSize=16, leading=20, spaceAfter=6),
+ #       "h2": ParagraphStyle("H2", parent=body, fontName="Helvetica-Bold",
+ #                            fontSize=13, leading=17, spaceBefore=6, spaceAfter=4),
+ #       "h3": ParagraphStyle("H3", parent=body, fontName="Helvetica-Bold",
+ #                            fontSize=11.5, leading=15, spaceBefore=4, spaceAfter=2),
+ #   }
+ #   bullet_style = ParagraphStyle(
+ #       "Bullet", 
+ #       parent=body, 
+ #       leftIndent=18, 
+ #       bulletIndent=6, 
+ #       spaceAfter=3
+ #   )
+
+ #   def to_markup(text: str) -> str:
+ #       cleaned_text = re.sub(r"^\s*[-*•]\s+", "", text)
+ #       out = []
+ #       for t, bold, italic in _inline_tokens(cleaned_text):
+ #           s = xml_escape(t)
+ #           if bold:
+ #               s = f"<b>{s}</b>"
+ #           if italic:
+ #               s = f"<i>{s}</i>"
+ #           out.append(s)
+ #       return "".join(out)
+
+ #   story = []
+ #   for kind, text in _parse_markdown_blocks(md):
+ #       if kind == "blank":
+ #           story.append(Spacer(1, 6))
+ #       elif kind in heads:
+ #           story.append(Paragraph(xml_escape(text), heads[kind]))
+ #       elif kind == "bullet":
+ #           story.append(Paragraph(to_markup(text), bullet_style, bulletText="•"))
+ #       else:
+ #           story.append(Paragraph(to_markup(text), body))
+ #   if not story:
+ #       story.append(Paragraph(" ", body))
+
+ #   pdf.build(story)
+ #   return buf.getvalue()
 
 
 # ---------------------------------------------------------------------------
