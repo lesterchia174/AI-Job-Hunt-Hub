@@ -884,6 +884,7 @@ def _parse_markdown_blocks(md: str):
         i += 1
         
     return blocks
+
 #NEW
 def _parse_markdown_blocks(md: str):
     blocks = []
@@ -954,50 +955,8 @@ def _parse_markdown_blocks(md: str):
         i += 1
         
     return blocks
-
-
 #END NEW
 
-"""
-#def _parse_markdown_blocks(md: str):
-#    blocks = []
-#    in_skills_or_competencies = False
-    
-#    for raw in (md or "").replace("\r\n", "\n").split("\n"):
-#        line = re.sub(r"(<br\s*/?>|\\)\s*$", "", raw.rstrip()).rstrip()
-#        if not line.strip():
-#            in_skills_or_competencies = False
-#            blocks.append(("blank", ""))
-#            continue
-            
-#        if re.match(r"^\s*([-*_])\1{2,}\s*$", line):
-#            blocks.append(("blank", ""))
-#            continue
-            
-#        m_head = re.match(r"^(#{1,3})\s+(.*)$", line)
-#        if m_head:
-#            heading_text = m_head.group(2).replace("**", "").strip().upper()
-#            if "CORE COMPETENCIES" in heading_text or "TECHNICAL SKILLSETS" in heading_text or "EDUCATION" in heading_text:
-#                in_skills_or_competencies = True
-#            else:
-#                in_skills_or_competencies = False
-#            blocks.append((f"h{len(m_head.group(1))}", _unescape_md(m_head.group(2).replace("**", "").strip())))
-#            continue
-        
-#        m_bullet = re.match(r"^\s*[-*•]\s+(.*)$", line)
-#        if m_bullet:
-#            blocks.append(("bullet", m_bullet.group(1).strip()))
-#            continue
-            
-#        if in_skills_or_competencies:
-#            is_job_header = bool(re.search(r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|\b20\d{2}\b)", line)) or line.endswith(", Singapore")
-#            if not is_job_header:
-#                blocks.append(("bullet", line.strip()))
-#                continue
-
-#        blocks.append(("para", line.strip()))
-#    return blocks
-"""
 
 def _inline_tokens(text: str):
     for part in re.split(r"(\*\*.+?\*\*|\*[^*\s][^*]*?\*)", text):
@@ -1071,36 +1030,7 @@ def markdown_to_docx_bytes(md: str) -> bytes:
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()
-#NEW
-
-
-#def markdown_to_docx_bytes(md: str) -> bytes:
-#    from docx import Document
-#    from docx.shared import Pt
-
-#    doc = Document()
-#    normal = doc.styles["Normal"]
-#    normal.font.name = "Calibri"
-#   normal.font.size = Pt(11)
-
-#    for kind, text in _parse_markdown_blocks(md):
-#        if kind == "blank":
-#            continue
-#        if kind in ("h1", "h2", "h3"):
-#            doc.add_heading(text, level=int(kind[1]))
-#            continue
-#        para = (
-#            doc.add_paragraph(style="List Bullet")
-#            if kind == "bullet" else doc.add_paragraph()
-#        )
-#        for t, bold, italic in _inline_tokens(text):
-#            run = para.add_run(t)
-#            run.bold = bold
-#            run.italic = italic
-
-#    buf = io.BytesIO()
-#    doc.save(buf)
-#    return buf.getvalue()
+#END NEW
 
 
 #New
@@ -1231,8 +1161,8 @@ def markdown_to_pdf_bytes(md: str) -> bytes:
 
     pdf.build(story)
     return buf.getvalue()
-
 #END NEW  
+
 
 #def markdown_to_pdf_bytes(md: str) -> bytes:
 #    from reportlab.lib.pagesizes import A4
