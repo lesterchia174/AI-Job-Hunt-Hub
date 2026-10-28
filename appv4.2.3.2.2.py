@@ -884,7 +884,79 @@ def _parse_markdown_blocks(md: str):
         i += 1
         
     return blocks
+#NEW
+def _parse_markdown_blocks(md: str):
+    blocks = []
+    in_skills_or_competencies = False
+    lines = (md or "").replace("\r\n", "\n").split("\n")
+    
+    i = 0
+    while i < len(lines):
+        raw = lines[i]
+        line = re.sub(r"(<br\s*/?>|\\)\s*$", "", raw.rstrip()).rstrip()
+        
+        if not line.strip():
+            in_skills_or_competencies = False
+            blocks.append(("blank", ""))
+            i += 1
+            continue
+            
+        # --- TABLE DETECTION ---
+        if line.startswith("|") and line.endswith("|"):
+            if i + 1 < len(lines):
+                next_line = lines[i+1].strip()
+                if re.match(r"^\|[\s\-:|]+\|$", next_line):
+                    # Table detected
+                    headers = [c.strip() for c in line.strip("|").split("|")]
+                    rows = []
+                    i += 2
+                    while i < len(lines):
+                        row_line = lines[i].strip()
+                        if not (row_line.startswith("|") and row_line.endswith("|")):
+                            break
+                        row_cells = [c.strip() for c in row_line.strip("|").split("|")]
+                        rows.append(row_cells)
+                        i += 1
+                    blocks.append(("table", {"headers": headers, "rows": rows}))
+                    continue
+        # -----------------------
 
+        if re.match(r"^\s*([-*_])\1{2,}\s*$", line):
+            blocks.append(("blank", ""))
+            i += 1
+            continue
+            
+        m_head = re.match(r"^(#{1,3})\s+(.*)$", line)
+        if m_head:
+            heading_text = m_head.group(2).replace("**", "").strip().upper()
+            if "CORE COMPETENCIES" in heading_text or "TECHNICAL SKILLSETS" in heading_text or "EDUCATION" in heading_text:
+                in_skills_or_competencies = True
+            else:
+                in_skills_or_competencies = False
+            blocks.append((f"h{len(m_head.group(1))}", _unescape_md(m_head.group(2).replace("**", "").strip())))
+            i += 1
+            continue
+        
+        m_bullet = re.match(r"^\s*[-*•]\s+(.*)$", line)
+        if m_bullet:
+            blocks.append(("bullet", m_bullet.group(1).strip()))
+            i += 1
+            continue
+            
+        if in_skills_or_competencies:
+            is_job_header = bool(re.search(r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|\b20\d{2}\b)", line)) or line.endswith(", Singapore")
+            if not is_job_header:
+                blocks.append(("bullet", line.strip()))
+                i += 1
+                continue
+
+        blocks.append(("para", line.strip()))
+        i += 1
+        
+    return blocks
+
+
+#END NEW
 
 """
 #def _parse_markdown_blocks(md: str):
