@@ -16,3 +16,4 @@ reportlab>=4.0.0
 streamlit-lexical-extended>=0.1.0
 requests>=2.31.0
 beautifulsoup4>=4.12.0
+mcp>=1.0.0   #new
